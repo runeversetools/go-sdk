@@ -1,2 +1,3 @@
 # Golang SDK for Runeverse Tools
-For more information please navigate to docs.runeverse.tools
+`go get github.com/runeversetools/go-sdk`
+For more information please navigate to [docs.runeverse.tools](docs.runeverse.tools)
