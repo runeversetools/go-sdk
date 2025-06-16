@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-// TODO: Left here for legacy reasons. Remove this after all clients are migrated to use NewClient.
-var httpClient = http.Client{Timeout: 5 * time.Second}
-
 type Client struct {
 	Host       string
 	ApiKey     string

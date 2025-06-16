@@ -14,52 +14,73 @@ type IOSBmpDevice struct {
 	IOSVersion string `json:"iosVersion"`
 }
 
-type iosBmpInitContext struct {
+type IOSBmpSession struct {
+	sessionData map[string]any
+	client      *Client
+}
+
+func (s *IOSBmpSession) Udid() string {
+	if udid, ok := s.sessionData["udid"].(string); ok {
+		return udid
+	}
+
+	return ""
+}
+
+func (s *IOSBmpSession) StartMillis() int {
+	if startMillis, ok := s.sessionData["startMillis"].(float64); ok {
+		return int(startMillis)
+	}
+
+	return 0
+}
+
+type iosBmpInitOptions struct {
 	IOSVersion    string `json:"iosVersion"`
 	MinIOSVersion string `json:"minIosVersion"`
 	MaxIOSVersion string `json:"maxIosVersion"`
 }
 
-type IOSBmpInitOption func(*iosBmpInitContext)
+type iosBmpInitOption func(*iosBmpInitOptions)
 
-func (client *Client) IOSBmpInit(options ...IOSBmpInitOption) (*IOSBmpDevice, map[string]any, error) {
-	var initContext iosBmpInitContext
-	for _, option := range options {
-		option(&initContext)
+func (client *Client) IOSBmpInit(opts ...iosBmpInitOption) (*IOSBmpDevice, *IOSBmpSession, error) {
+	var options iosBmpInitOptions
+	for _, option := range opts {
+		option(&options)
 	}
 
 	req, err := http.NewRequest("GET", client.Host+"/bmp/ios/init", nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while creating request: %w", err)
 	}
 
 	query := req.URL.Query()
 
-	query.Set("iosVersion", initContext.IOSVersion)
-	if initContext.IOSVersion != "" {
-		query.Set("iosVersion", initContext.IOSVersion)
+	query.Set("iosVersion", options.IOSVersion)
+	if options.IOSVersion != "" {
+		query.Set("iosVersion", options.IOSVersion)
 	}
 
-	if initContext.MinIOSVersion != "" {
-		query.Set("minIosVersion", initContext.MinIOSVersion)
+	if options.MinIOSVersion != "" {
+		query.Set("minIosVersion", options.MinIOSVersion)
 	}
 
-	if initContext.MaxIOSVersion != "" {
-		query.Set("maxIosVersion", initContext.MaxIOSVersion)
+	if options.MaxIOSVersion != "" {
+		query.Set("maxIosVersion", options.MaxIOSVersion)
 	}
 
 	req.URL.RawQuery = query.Encode()
 
 	req.Header.Set("X-Api-Key", client.ApiKey)
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HttpClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while sending request: %w", err)
 	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while reading response: %w", err)
 	}
 
 	var iosBmpInitData struct {
@@ -69,47 +90,52 @@ func (client *Client) IOSBmpInit(options ...IOSBmpInitOption) (*IOSBmpDevice, ma
 	}
 
 	if err := json.Unmarshal(respBytes, &iosBmpInitData); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while unmarshalling response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("IOSBmpGetSensor: %s", iosBmpInitData.Error)
+	if iosBmpInitData.Error != "" {
+		return nil, nil, &RemoteError{iosBmpInitData.Error}
 	}
 
-	return &iosBmpInitData.Device, iosBmpInitData.Session, nil
+	return &iosBmpInitData.Device, &IOSBmpSession{
+		sessionData: iosBmpInitData.Session,
+		client:      client,
+	}, nil
 }
 
-func (client *Client) IOSBmpGetSensor(bmpVersion string, appPackage string, additionalData map[string]any, session map[string]any) (string, map[string]any, BmpReportData, error) {
+func (session *IOSBmpSession) Sensor(bmpVersion string, appPackage string, options ...func(map[string]any)) (string, BmpReportData, error) {
 	requestData := map[string]any{
 		"bmpVersion": bmpVersion,
 		"appPackage": appPackage,
-		"session":    session,
+		"session":    session.sessionData,
 	}
 
-	for key, value := range additionalData {
-		requestData[key] = value
+	for _, option := range options {
+		option(requestData)
 	}
+
+	client := session.client
 
 	reqBytes, err := json.Marshal(requestData)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while marshalling request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", client.Host+"/bmp/ios/sensor", bytes.NewReader(reqBytes))
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while creating request: %w", err)
 	}
 
 	req.Header.Set("X-Api-Key", client.ApiKey)
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HttpClient.Do(req)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while sending request: %w", err)
 	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while reading response: %w", err)
 	}
 
 	var iosBmpSensorResponse struct {
@@ -120,30 +146,32 @@ func (client *Client) IOSBmpGetSensor(bmpVersion string, appPackage string, addi
 	}
 
 	if err := json.Unmarshal(respBytes, &iosBmpSensorResponse); err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while unmarshalling response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, nil, fmt.Errorf("IOSBmpGetSensor: %s", iosBmpSensorResponse.Error)
+	if iosBmpSensorResponse.Error != "" {
+		return "", "", &RemoteError{iosBmpSensorResponse.Error}
 	}
 
-	return iosBmpSensorResponse.Sensor, iosBmpSensorResponse.Session, iosBmpSensorResponse.ReportData, nil
+	session.sessionData = iosBmpSensorResponse.Session
+
+	return iosBmpSensorResponse.Sensor, iosBmpSensorResponse.ReportData, nil
 }
 
-func WithIOSVersion(version string) func(*iosBmpInitContext) {
-	return func(c *iosBmpInitContext) {
+func WithIOSVersion(version string) func(*iosBmpInitOptions) {
+	return func(c *iosBmpInitOptions) {
 		c.IOSVersion = version
 	}
 }
 
-func WithMinIOSVersion(version string) func(*iosBmpInitContext) {
-	return func(c *iosBmpInitContext) {
+func WithMinIOSVersion(version string) func(*iosBmpInitOptions) {
+	return func(c *iosBmpInitOptions) {
 		c.MinIOSVersion = version
 	}
 }
 
-func WithMaxIOSVersion(version string) func(*iosBmpInitContext) {
-	return func(c *iosBmpInitContext) {
+func WithMaxIOSVersion(version string) func(*iosBmpInitOptions) {
+	return func(c *iosBmpInitOptions) {
 		c.MaxIOSVersion = version
 	}
 }

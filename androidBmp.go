@@ -19,24 +19,43 @@ type AndroidBmpDevice struct {
 	WidthPixels  int    `json:"widthPixels"`
 }
 
-type BmpReportData any
+type AndroidBmpSession struct {
+	sessionData map[string]any
+	client      *Client
+}
 
-func (client *Client) AndroidBmpInit() (*AndroidBmpDevice, map[string]any, error) {
+func (s *AndroidBmpSession) AndroidId() string {
+	if androidId, ok := s.sessionData["androidId"].(string); ok {
+		return androidId
+	}
+
+	return ""
+}
+
+func (s *AndroidBmpSession) StartMillis() int {
+	if startMillis, ok := s.sessionData["startMillis"].(float64); ok {
+		return int(startMillis)
+	}
+
+	return 0
+}
+
+func (client *Client) AndroidBmpInit() (*AndroidBmpDevice, *AndroidBmpSession, error) {
 	req, err := http.NewRequest("GET", client.Host+"/bmp/android/init", nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while creating request: %w", err)
 	}
 
 	req.Header.Set("X-Api-Key", client.ApiKey)
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HttpClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while sending request: %w", err)
 	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -45,10 +64,10 @@ func (client *Client) AndroidBmpInit() (*AndroidBmpDevice, map[string]any, error
 		}
 
 		if err := json.Unmarshal(respBytes, &errorResponse); err != nil {
-			return nil, nil, fmt.Errorf("AndroidBmpInit: %s", errorResponse.Error)
+			return nil, nil, fmt.Errorf("error while unmarshalling error response: %w", err)
 		}
 
-		return nil, nil, fmt.Errorf("AndroidBmpInit: %s", errorResponse.Error)
+		return nil, nil, &RemoteError{errorResponse.Error}
 	}
 
 	var androidBmpInitData struct {
@@ -57,39 +76,43 @@ func (client *Client) AndroidBmpInit() (*AndroidBmpDevice, map[string]any, error
 	}
 
 	if err := json.Unmarshal(respBytes, &androidBmpInitData); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error while unmarshalling response: %w", err)
 	}
 
-	return &androidBmpInitData.Device, androidBmpInitData.Session, nil
+	return &androidBmpInitData.Device, &AndroidBmpSession{
+		sessionData: androidBmpInitData.Session,
+		client:      client,
+	}, nil
 }
 
-func (client *Client) AndroidBmpGetSensor(version string, appPackage string, language string, additionalData map[string]any, session map[string]any) (string, map[string]any, BmpReportData, error) {
+func (session *AndroidBmpSession) Sensor(version string, appPackage string, opts ...func(map[string]any)) (string, BmpReportData, error) {
 	requestData := map[string]any{
 		"bmpVersion": version,
 		"appPackage": appPackage,
-		"language":   language,
 		"session":    session,
 	}
 
-	for key, value := range additionalData {
-		requestData[key] = value
+	for _, option := range opts {
+		option(requestData)
 	}
+
+	client := session.client
 
 	reqBytes, err := json.Marshal(requestData)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while marshalling request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", client.Host+"/bmp/android/sensor", bytes.NewReader(reqBytes))
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while creating request: %w", err)
 	}
 
 	req.Header.Set("X-Api-Key", client.ApiKey)
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HttpClient.Do(req)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while sending request: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -97,12 +120,12 @@ func (client *Client) AndroidBmpGetSensor(version string, appPackage string, lan
 			Error string `json:"error"`
 		}
 
-		return "", nil, nil, fmt.Errorf("AndroidBmpGetSensor: %s", errorResponse.Error)
+		return "", "", &RemoteError{errorResponse.Error}
 	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while reading response: %w", err)
 	}
 
 	var androidBmpSensorResponse struct {
@@ -112,21 +135,18 @@ func (client *Client) AndroidBmpGetSensor(version string, appPackage string, lan
 	}
 
 	if err := json.Unmarshal(respBytes, &androidBmpSensorResponse); err != nil {
-		return "", nil, nil, err
+		return "", "", fmt.Errorf("error while unmarshalling response: %w", err)
 	}
 
-	if androidBmpSensorResponse.Sensor == "" {
-		return "", nil, nil, fmt.Errorf("AndroidBmpGetSensorSessionless: sensor is empty")
-	}
+	session.sessionData = androidBmpSensorResponse.Session
 
-	return androidBmpSensorResponse.Sensor, androidBmpSensorResponse.Session, androidBmpSensorResponse.ReportData, nil
+	return androidBmpSensorResponse.Sensor, androidBmpSensorResponse.ReportData, nil
 }
 
-func (client *Client) AndroidBmpGetSensorSessionless(version string, appPackage string, language string, additionalData map[string]any) (string, *AndroidBmpDevice, map[string]any, BmpReportData, error) {
+func (client *Client) AndroidBmpGetSensorSessionless(version string, appPackage string, additionalData map[string]any) (string, *AndroidBmpDevice, map[string]any, BmpReportData, error) {
 	requestData := map[string]any{
 		"bmpVersion": version,
 		"appPackage": appPackage,
-		"language":   language,
 	}
 
 	for key, value := range additionalData {
@@ -135,19 +155,19 @@ func (client *Client) AndroidBmpGetSensorSessionless(version string, appPackage 
 
 	reqBytes, err := json.Marshal(requestData)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	req, err := http.NewRequest("POST", client.Host+"/bmp/android/sensor", bytes.NewReader(reqBytes))
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	req.Header.Set("X-Api-Key", client.ApiKey)
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HttpClient.Do(req)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -155,12 +175,12 @@ func (client *Client) AndroidBmpGetSensorSessionless(version string, appPackage 
 			Error string `json:"error"`
 		}
 
-		return "", nil, nil, nil, fmt.Errorf("AndroidBmpGetSensor: %s", errorResponse.Error)
+		return "", nil, nil, "", fmt.Errorf("AndroidBmpGetSensor: %s", errorResponse.Error)
 	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	var androidBmpSensorResponse struct {
@@ -171,11 +191,11 @@ func (client *Client) AndroidBmpGetSensorSessionless(version string, appPackage 
 	}
 
 	if err := json.Unmarshal(respBytes, &androidBmpSensorResponse); err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, "", err
 	}
 
 	if androidBmpSensorResponse.Sensor == "" {
-		return "", nil, nil, nil, fmt.Errorf("AndroidBmpGetSensorSessionless: sensor is empty")
+		return "", nil, nil, "", fmt.Errorf("AndroidBmpGetSensorSessionless: sensor is empty")
 	}
 
 	return androidBmpSensorResponse.Sensor, &androidBmpSensorResponse.Device, androidBmpSensorResponse.Session, androidBmpSensorResponse.ReportData, nil
