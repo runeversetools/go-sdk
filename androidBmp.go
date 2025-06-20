@@ -89,7 +89,7 @@ func (session *AndroidBmpSession) Sensor(version string, appPackage string, opts
 	requestData := map[string]any{
 		"bmpVersion": version,
 		"appPackage": appPackage,
-		"session":    session,
+		"session":    session.sessionData,
 	}
 
 	for _, option := range opts {
