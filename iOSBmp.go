@@ -56,7 +56,6 @@ func (client *Client) IOSBmpInit(opts ...iosBmpInitOption) (*IOSBmpDevice, *IOSB
 
 	query := req.URL.Query()
 
-	query.Set("iosVersion", options.IOSVersion)
 	if options.IOSVersion != "" {
 		query.Set("iosVersion", options.IOSVersion)
 	}
