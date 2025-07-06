@@ -39,6 +39,7 @@ type iosBmpInitOptions struct {
 	IOSVersion    string `json:"iosVersion"`
 	MinIOSVersion string `json:"minIosVersion"`
 	MaxIOSVersion string `json:"maxIosVersion"`
+	Model         string `json:"model"`
 }
 
 type iosBmpInitOption func(*iosBmpInitOptions)
@@ -66,6 +67,10 @@ func (client *Client) IOSBmpInit(opts ...iosBmpInitOption) (*IOSBmpDevice, *IOSB
 
 	if options.MaxIOSVersion != "" {
 		query.Set("maxIosVersion", options.MaxIOSVersion)
+	}
+
+	if options.Model != "" {
+		query.Set("model", options.Model)
 	}
 
 	req.URL.RawQuery = query.Encode()
@@ -172,5 +177,11 @@ func WithMinIOSVersion(version string) func(*iosBmpInitOptions) {
 func WithMaxIOSVersion(version string) func(*iosBmpInitOptions) {
 	return func(c *iosBmpInitOptions) {
 		c.MaxIOSVersion = version
+	}
+}
+
+func WithDeviceModel(model string) func(*iosBmpInitOptions) {
+	return func(c *iosBmpInitOptions) {
+		c.Model = model
 	}
 }
