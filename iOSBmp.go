@@ -162,24 +162,28 @@ func (session *IOSBmpSession) Sensor(bmpVersion string, appPackage string, optio
 	return iosBmpSensorResponse.Sensor, iosBmpSensorResponse.ReportData, nil
 }
 
+// Sets the iOS version for the BMP session.
 func WithIOSVersion(version string) func(*iosBmpInitOptions) {
 	return func(c *iosBmpInitOptions) {
 		c.IOSVersion = version
 	}
 }
 
+// Sets the minimum iOS version (>= version) for the BMP session.
 func WithMinIOSVersion(version string) func(*iosBmpInitOptions) {
 	return func(c *iosBmpInitOptions) {
 		c.MinIOSVersion = version
 	}
 }
 
+// Sets the maximum iOS version (<= version) for the BMP session.
 func WithMaxIOSVersion(version string) func(*iosBmpInitOptions) {
 	return func(c *iosBmpInitOptions) {
 		c.MaxIOSVersion = version
 	}
 }
 
+// Sets the device model for the BMP session.
 func WithDeviceModel(model string) func(*iosBmpInitOptions) {
 	return func(c *iosBmpInitOptions) {
 		c.Model = model
